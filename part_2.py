@@ -33,8 +33,8 @@ class DotDict(dict):
         l.extend(super(DotDict, self).__dir__())
         return l
 
-
-pl_actions = DotDict({"LEFT": (-1, 0), "RIGHT": (1, 0),
+# unit vectors for directions
+pl_moves = DotDict({"LEFT": (-1, 0), "RIGHT": (1, 0),
                       "UP": (0, 1), "DOWN": (0, -1), "STAY": (0, 0)})
 pl_states = DotDict({"W": (-1, 0), "E": (1, 0),
                      "N": (0, 1), "S": (0, -1), "C": (0, 0)})
@@ -42,7 +42,7 @@ pl_inv_states = {pl_states[k]: k for k in pl_states}
 
 
 class Player(object):
-    ACTIONS = pl_actions
+    MOVES = pl_moves
     STATES = pl_states
     _INV_STATE_MAP = pl_inv_states
 
@@ -80,12 +80,12 @@ class Player(object):
 
 
 class Enemy(object):
-    STATE = DotDict({"DORMANT": 0, "READY": 1})
+    STATES = DotDict({"DORMANT": 0, "READY": 1})
 
     def __init__(self, name: str):
         self.name = name
         self.health = 100
-        self.state = Enemy.STATE.DORMANT
+        self.state = Enemy.STATES.DORMANT
 
     def __str__(self):
         return self.name
@@ -101,7 +101,7 @@ def loop():
     while True:
         iter_count += 1
         # print("Round", iter_count)
-        ij.prob_move(random.choice(list(Player.ACTIONS.values())))
+        ij.prob_move(random.choice(list(Player.MOVES.values())))
         print(ij.cur_state)
         if iter_count >= max_tries:
             print("Game Over")
