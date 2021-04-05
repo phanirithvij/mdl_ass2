@@ -15,7 +15,7 @@ GAMMA = 0.999
 DELTA = 1e-3
 
 
-p = np.array([
+p_mat = np.array([
     #     W    N     C    S    E
     [
         [.00, .00, .00, .00, .00],  # W, left
@@ -98,6 +98,10 @@ class PlayerMove:
     RIGHT = np.array((1, 0))
 
 
+class MoveIndex:
+    LEFT, UP, STAY, DOWN, RIGHT = 0, 1, 2, 3, 4
+
+
 class PlayerState:
     W = np.array((-1, 0))
     N = np.array((0, 1))
@@ -106,20 +110,35 @@ class PlayerState:
     E = np.array((1, 0))
 
 
+class StateIndex:
+    W, N, C, S, E = 0, 1, 2, 3, 4
+    _inv_map = DotDict({
+        tuple(PlayerState.W): W,
+        tuple(PlayerState.N): N,
+        tuple(PlayerState.C): C,
+        tuple(PlayerState.S): S,
+        tuple(PlayerState.E): E,
+    })
+
+    @staticmethod
+    def from_state(state):
+        return StateIndex._inv_map[tuple(state)]
+
+
 # unit vectors for directions
 pl_moves = DotDict({
     "LEFT": tuple(PlayerMove.LEFT),
-    "RIGHT": tuple(PlayerMove.RIGHT),
     "UP": tuple(PlayerMove.UP),
+    "STAY": tuple(PlayerMove.STAY),
     "DOWN": tuple(PlayerMove.DOWN),
-    "STAY": tuple(PlayerMove.STAY)
+    "RIGHT": tuple(PlayerMove.RIGHT),
 })
 pl_states = DotDict({
     "W": tuple(PlayerState.W),
-    "E": tuple(PlayerState.E),
     "N": tuple(PlayerState.N),
+    "C": tuple(PlayerState.C),
     "S": tuple(PlayerState.S),
-    "C": tuple(PlayerState.C)
+    "E": tuple(PlayerState.E),
 })
 
 pl_attacks = DotDict({"SHOOT": 25, "HIT": 50})
@@ -181,6 +200,18 @@ class Player(object):
         # any other move for any state is determined i.e. prob = 1
         self.move(direction)
 
+    def val_iter(self):
+        st_idx = StateIndex.from_state(self.state)
+        rs = np.zeros((5,), dtype=np.float)
+        fxs = np.zeros((5,), dtype=np.float)
+        for i in range(5):
+            rs[i] = np.sum(p_mat[st_idx][i] * STEP_COST)
+            fxs[i] = GAMMA * np.sum(self._values.copy() * p_mat[st_idx][i])
+        lst = rs + fxs
+        maxcv = np.max(lst)
+        self._values[st_idx] = maxcv
+        # self._values[:] = np.round(self._values, 9)
+
     def get_wrecked(self):
         if tuple(self.state) not in [Player.STATES.C, Player.STATES.E]:
             return
@@ -225,11 +256,12 @@ class Player(object):
                 self.materials += 1
 
     def make_move(self, enemy):
+        self.val_iter()
         if self.stunned:
             # can't make any move for one round
             self.stunned = False
             return
-        if len(self.choices) == 0:
+        if not hasattr(self, 'choices'):
             # all possible choices player could make
             self.choices = []
             self.choices.extend(list(Player.ATTACKS.values()))
