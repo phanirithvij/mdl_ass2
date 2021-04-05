@@ -15,6 +15,46 @@ GAMMA = 0.999
 DELTA = 1e-3
 
 
+p = np.array([
+    #     W    N     C    S    E
+    [
+        [.00, .00, .00, .00, .00],  # W, left
+        [.00, .00, .00, .00, .00],  # W, up
+        [1.0, .00, .00, .00, .00],  # W, stay   -
+        [.00, .00, .00, .00, .00],  # W, down
+        [.00, .00, 1.0, .00, .00],  # W, right  -
+    ],
+    [
+        [.00, .00, .00, .00, .00],  # N, left
+        [.00, .00, .00, .00, .00],  # N, up
+        [.00, .85, .00, .00, .15],  # N, stay   -
+        [.00, .00, .85, .00, .15],  # N, down   -
+        [.00, .00, .00, .00, .00],  # N, right
+    ],
+    [
+        [.85, .00, .00, .00, .15],  # C, left   -
+        [.00, .85, .00, .00, .15],  # C, up     -
+        [.00, .00, .85, .00, .15],  # C, stay   -
+        [.00, .00, .00, .85, .15],  # C, down   -
+        [.00, .00, .00, .00, 1.0],  # C, right  -
+    ],
+    [
+        [.00, .00, .00, .00, .00],  # S, left
+        [.00, .00, .85, .00, .15],  # S, up     -
+        [.00, .00, .00, .85, .15],  # S, stay   -
+        [.00, .00, .00, .00, .00],  # S, down
+        [.00, .00, .00, .00, .00],  # S, right
+    ],
+    [
+        [.00, .00, 1.0, .00, .00],  # E, left   -
+        [.00, .00, .00, .00, .00],  # E, up
+        [.00, .00, .00, .00, 1.0],  # E, stay   -
+        [.00, .00, .00, .00, .00],  # E, down
+        [.00, .00, .00, .00, .00],  # E, right
+    ],
+])
+
+
 def prob(p: float):
     """Returns True with a probability if p"""
     return random.random() < p
@@ -52,18 +92,18 @@ class npdict():
 
 class PlayerMove:
     LEFT = np.array((-1, 0))
-    RIGHT = np.array((1, 0))
     UP = np.array((0, 1))
-    DOWN = np.array((0, -1))
     STAY = np.array((0, 0))
+    DOWN = np.array((0, -1))
+    RIGHT = np.array((1, 0))
 
 
 class PlayerState:
     W = np.array((-1, 0))
-    E = np.array((1, 0))
     N = np.array((0, 1))
-    S = np.array((0, -1))
     C = np.array((0, 0))
+    S = np.array((0, -1))
+    E = np.array((1, 0))
 
 
 # unit vectors for directions
@@ -134,7 +174,7 @@ class Player(object):
 
     def try_move(self, direction: tuple):
         if tuple(self.state) in [Player.STATES.C, Player.STATES.N, Player.STATES.S]:
-            if not prob(0.85):
+            if not prob(.85):
                 # move/teleport to (E) 15% of time
                 self.jump_to_east()
                 return
@@ -189,11 +229,14 @@ class Player(object):
             # can't make any move for one round
             self.stunned = False
             return
-        choices = []
-        choices.extend(list(Player.ATTACKS.values()))
-        choices.extend(list(Player.MOVES.values()))
-        choices.extend(list(Player.ACTIONS.values()))
-        self._action = random.choice(choices)
+        if len(self.choices) == 0:
+            # all possible choices player could make
+            self.choices = []
+            self.choices.extend(list(Player.ATTACKS.values()))
+            self.choices.extend(list(Player.MOVES.values()))
+            self.choices.extend(list(Player.ACTIONS.values()))
+        # perform a random action
+        self._action = random.choice(self.choices)
         self.perform_action(enemy)
 
     def perform_action(self, enemy):
