@@ -1,6 +1,5 @@
 import os
 from collections import OrderedDict
-from typing import Iterable
 import random
 import numpy as np
 
@@ -55,7 +54,7 @@ p_mat = np.array([
 ])
 
 
-def prob(p: float):
+def prob(p):
     """Returns True with a probability if p"""
     return random.random() < p
 
@@ -70,7 +69,7 @@ class DotDict(OrderedDict):
     __delattr__ = dict.__delitem__
     # https://stackoverflow.com/a/32453194/8608146
 
-    def __dir__(self) -> Iterable[str]:
+    def __dir__(self):
         l = list(dict.keys(self))
         l.extend(super(DotDict, self).__dir__())
         return l
@@ -84,7 +83,6 @@ class npdict():
         self.mapper = one_one_mapper
 
     def __getitem__(self, key):
-        # print(self.arr, self.mapper, key)
         return self.arr[self.mapper[key]]
 
     def __setitem__(self, key, val):
@@ -160,7 +158,7 @@ class Player(object):
     ATTACKS = pl_attacks
     ACTIONS = pl_actions
 
-    def __init__(self, name: str, inital_state=PlayerState.N):
+    def __init__(self, name, inital_state=PlayerState.N):
         self.name = name
         self.state = inital_state
         self._action = Player.ACTIONS.NONE
@@ -178,11 +176,11 @@ class Player(object):
             self.state -= direction
 
     @property
-    def cur_state(self) -> str:
+    def cur_state(self):
         return _INV_STATE_MAP[tuple(self.state)]
 
     @property
-    def action(self) -> str:
+    def action(self):
         return _INV_ACTIONS_MAP[self._action]
 
     @property
@@ -192,16 +190,14 @@ class Player(object):
     def jump_to_east(self):
         self.state = PlayerState.E
 
-    def try_move(self, direction: tuple):
-        prev_state = self.state
+    def try_move(self, direction):
         if tuple(self.state) in [Player.STATES.C, Player.STATES.N, Player.STATES.S]:
             if not prob(.85):
                 # move/teleport to (E) 15% of time
                 self.jump_to_east()
-                return prev_state
+                return
         # any other move for any state is determined i.e. prob = 1
         self.move(direction)
-        return prev_state
 
     def val_iter(self):
         st_idx = StateIndex.from_state(self.state)
@@ -213,7 +209,7 @@ class Player(object):
         lst = rs + fxs
         maxcv = np.max(lst)
         self._values[st_idx] = maxcv
-        # self._values[:] = np.round(self._values, 3)
+        # self._values[:] = np.round(self._values, 9)
 
     def get_wrecked(self):
         if tuple(self.state) not in [Player.STATES.C, Player.STATES.E]:
@@ -222,7 +218,7 @@ class Player(object):
         self.reward -= 40
         self.stunned = True
 
-    def attack(self, enemy, action: int):
+    def attack(self, enemy, action):
         success_prob = 0
         if action == Player.ATTACKS.SHOOT:
             # check arrows
@@ -243,15 +239,13 @@ class Player(object):
 
         # deal appropriate damage with success_probability
         if prob(success_prob):
-            return enemy.bleed(action)
+            enemy.bleed(action)
 
     def craft(self):
         if not np.array_equal(self.state, Player.STATES.N) or self.materials == 0:
             return
         self.materials -= 1
-        new_arrows = np.random.choice([1, 2, 3], p=[0.5, 0.35, 0.15])
-        self.arrows += new_arrows
-        return 1, new_arrows
+        self.arrows += np.random.choice([1, 2, 3], p=[0.5, 0.35, 0.15])
 
     def gather(self):
         if not np.array_equal(self.state, Player.STATES.S):
@@ -259,99 +253,34 @@ class Player(object):
         if prob(0.75):
             if self.materials == 0:
                 self.materials += 1
-                return 1
-
-    def think(self, enemy):
-        self.val_iter()
-        for a in self.choices:
-            self._action = a
-            for s, x in Player.STATES.items():
-                thoughts = self.simulate_action(enemy)
-                print(
-                    f"({s},{self.materials},{self.arrows},{enemy.state},{enemy.health}):{self.action}=[{self.values[s]}]")
-                self.undo_simulated_action(enemy, *thoughts)
-        # TODO best action from value iteration
-        best_action = Player.MOVES.LEFT
-        return best_action
 
     def make_move(self, enemy):
+        self.val_iter()
+        if self.stunned:
+            # can't make any move for one round
+            self.stunned = False
+            return
         if not hasattr(self, 'choices'):
             # all possible choices player could make
             self.choices = []
             self.choices.extend(list(Player.ATTACKS.values()))
             self.choices.extend(list(Player.MOVES.values()))
             self.choices.extend(list(Player.ACTIONS.values()))
-        best_action = self.think(enemy)
-        if self.stunned:
-            # can't make any move for one round
-            self.stunned = False
-            return
-        # # perform a random action
-        # self._action = random.choice(self.choices)
-        self._action = best_action
+        # perform a random action
+        self._action = random.choice(self.choices)
         self.perform_action(enemy)
 
-    def simulate_action(self, enemy):
-        action = self._action
-        damage, prev_state, craft_gains, mat_gains = None, None, None, None
-        if action in Player.ATTACKS.values():
-            damage = self.attack(enemy, action)
-
-        elif action in Player.MOVES.values():
-            prev_state = self.try_move(
-                random.choice(list(Player.MOVES.values())))
-        elif action in Player.ACTIONS.values():
-            if action == Player.ACTIONS.CRAFT:
-                craft_gains = self.craft()
-            elif action == Player.ACTIONS.GATHER:
-                mat_gains = self.gather()
-            elif action == Player.ACTIONS.NONE:
-                pass
-        return [damage, prev_state, craft_gains, mat_gains]
-
-    def undo_simulated_action(self, enemy, damage, prev_state, craft_gains, mat_gains):
+    def perform_action(self, enemy):
         action = self._action
         if action in Player.ATTACKS.values():
-            if damage is not None:
-                enemy.heal(damage)
-
+            self.attack(enemy, action)
         elif action in Player.MOVES.values():
-            self.state = prev_state
+            self.try_move(random.choice(list(Player.MOVES.values())))
         elif action in Player.ACTIONS.values():
             if action == Player.ACTIONS.CRAFT:
-                if craft_gains is not None:
-                    mat_gone, new_arrows = craft_gains
-                    self.materials += mat_gone
-                    self.arrows -= new_arrows
+                self.craft()
             elif action == Player.ACTIONS.GATHER:
-                if mat_gains is not None:
-                    self.materials -= mat_gains
-            elif action == Player.ACTIONS.NONE:
-                pass
-
-    def perform_action(self, enemy, undo=False):
-        action = self._action
-        if action in Player.ATTACKS.values():
-            damage = self.attack(enemy, action)
-            if undo and damage is not None:
-                enemy.heal(damage)
-
-        elif action in Player.MOVES.values():
-            prev_state = self.try_move(
-                random.choice(list(Player.MOVES.values())))
-            if undo:
-                self.state = prev_state
-        elif action in Player.ACTIONS.values():
-            if action == Player.ACTIONS.CRAFT:
-                details = self.craft()
-                if undo and details is not None:
-                    mat_gone, new_arrows = details
-                    self.materials += mat_gone
-                    self.arrows -= new_arrows
-            elif action == Player.ACTIONS.GATHER:
-                mat_gains = self.gather()
-                if undo and mat_gains is not None:
-                    self.material -= mat_gains
+                self.gather()
             elif action == Player.ACTIONS.NONE:
                 pass
 
@@ -362,16 +291,15 @@ class Player(object):
 class Enemy(object):
     STATES = DotDict({"D": 0, "R": 1})
 
-    def __init__(self, name: str):
+    def __init__(self, name):
         self.name = name
         self.health = 100
         self.state = Enemy.STATES.D
 
-    def bleed(self, damage: int = 25):
+    def bleed(self, damage = 25):
         self.health -= damage
-        return damage
 
-    def heal(self, health: int = 25):
+    def heal(self, health = 25):
         self.health += health
 
     @property
@@ -388,14 +316,14 @@ class Enemy(object):
         if prob(0.2):
             self.get_ready()
 
-    def try_attack(self, player: Player):
+    def try_attack(self, player):
         if prob(0.5):
             # attack
             player.get_wrecked()
             self.heal()
             self.rest()
 
-    def make_move(self, player: Player):
+    def make_move(self, player):
         self.think()
         if self.state == Enemy.STATES.R:
             self.try_attack(player)
@@ -423,8 +351,8 @@ def loop():
         # print(mm.health)
         # print(ij.action)
         # print(ij.values[ij.cur_state])
-        # print(
-        #     f"({ij.cur_state},{ij.materials},{ij.arrows},{mm.state},{mm.health}):{ij.action}=[{ij.values[ij.cur_state]}]")
+        print(
+            f"({ij.cur_state},{ij.materials},{ij.arrows},{mm.state},{mm.health}):{ij.action}=[{ij.values[ij.cur_state]}]")
         if iter_count >= max_tries or mm.dead:
             print("Game Over")
             return
@@ -437,3 +365,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
