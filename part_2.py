@@ -18,7 +18,6 @@ DELTA = 1e-3
 # state mat arrow enemy health actions
 # num_states = (5, 3, 4, 2, 5)
 num_states = 5*3*4*2*5  # 600
-states = np.zeros((5, 3, 4, 2, 5), dtype=np.int)
 p_mat = np.zeros((num_states, 10, num_states), dtype=np.float)
 
 # mat -> arr
@@ -183,7 +182,7 @@ _INV_STATE_MAP_INDEX = {k: i for i, k in enumerate(pl_states)}
 _INV_STATE_MAP_NP_INDEX = {i: np.array(
 	pl_states[k]) for i, k in enumerate(pl_states)}
 
-pl_actions = DotDict({"CRAFT": 2, "GATHER": 3, "NONE": 4})
+pl_actions = DotDict({"CRAFT": 1221, "GATHER": 3233, "NONE": 41212})
 
 _INV_ACTIONS_MAP = {pl_actions[k]: k for k in pl_actions}
 _INV_ACTIONS_MAP.update({pl_moves[k]: k for k in pl_moves})
@@ -216,11 +215,33 @@ class ActionIndex:
 
 class ChoiceIndex(MoveIndex, ActionIndex):
 
+	_inv_map_strs = DotDict({
+		MoveIndex.LEFT: "LEFT",
+		MoveIndex.UP: "UP",
+		MoveIndex.STAY: "STAY",
+		MoveIndex.DOWN: "DOWN",
+		MoveIndex.RIGHT: "RIGHT",
+		ActionIndex.SHOOT: "SHOOT",
+		ActionIndex.HIT: "HIT",
+		ActionIndex.CRAFT: "CRAFT",
+		ActionIndex.GATHER: "GATHER",
+		ActionIndex.NONE: "NONE",
+	})
+
 	@staticmethod
 	def from_choice(choice):
 		if type(choice) == int:
 			return ActionIndex._inv_map[choice]
 		return MoveIndex._inv_map[tuple(choice)]
+
+	@staticmethod
+	def str(choice):
+		strx = ""
+		try:
+			strx = ChoiceIndex._inv_map_strs[choice]
+		except KeyError:
+			strx = "ERROR"
+		return strx
 
 
 class Player(object):
@@ -245,14 +266,20 @@ class Player(object):
 		self.choices.extend(list(Player.MOVES.values()))
 		self.choices.extend(list(Player.ACTIONS.values()))
 
-	def move(self, direction):
+	def move(self, direction, simulate=False):
 		# add direction to state
 		self.state += direction
 		if np.sum(np.abs(self.state)) > 1:
 			# out of bounds, illegal move -> undo move
 			self.state -= direction
 
-		return np.sum(np.abs(self.state)) <= 1
+		if simulate:
+			return np.sum(np.abs(self.state)) <= 1
+
+	def valid_move(self, direction, new_state_pos):
+		if type(direction) == int or type(new_state_pos) == int:
+			print(new_state_pos, direction)
+		return tuple(new_state_pos - direction) == tuple(self.state) or (tuple(self.state) != Player.STATES.W and tuple(new_state_pos) == Player.STATES.E)
 
 	@property
 	def cur_state(self) -> str:
@@ -271,17 +298,22 @@ class Player(object):
 
 	def try_move(self, direction: tuple, simulate=False):
 		prev_state = self.state
-		if tuple(self.state) in [Player.STATES.C, Player.STATES.N, Player.STATES.S]:
-			if simulate:
-				return 0.85
-			if not prob(.85):
-				# move/teleport to (E) 15% of time
-				self.jump_to_east()
-				return prev_state
-		# any other move for any state is determined i.e. prob = 1
-		can_move = self.move(direction)
+		can_move = self.move(direction, simulate)
 		if can_move:
 			return prev_state
+
+	def try_next_move(self, direction: tuple, new_state_pos):
+		# can_move = self.valid_move(direction, new_state_pos)
+		# if not can_move:
+		# 	return 0
+		prev_state_idx = StateIndex.from_state(self.state)
+		new_state_idx = StateIndex.from_state(new_state_pos)
+		probx = move_p_mat[prev_state_idx][ChoiceIndex.from_choice(direction)][new_state_idx]
+		# if new_state_idx == StateIndex.E:
+			# if probx == 0.15:
+			# 	print("Tele", "E")
+			# 	print(prev_state_idx, ChoiceIndex.from_choice(direction), new_state_idx, probx)
+		return probx
 
 	def val_iter(self):
 		# for all i
@@ -313,12 +345,14 @@ class Player(object):
 		self._values[st_idx] = maxcv
 		# self._values[:] = np.round(self._values, 3)
 
-	def get_wrecked(self):
+	def get_wrecked(self, simulate=False):
 		if tuple(self.state) not in [Player.STATES.C, Player.STATES.E]:
 			return
 		self.arrows = 0
 		self.reward -= 40
 		self.stunned = True
+		if simulate:
+			return True
 
 	def check_attack(self, action: int, new_state):
 		if not np.array_equal(new_state.state, self.state):
@@ -334,15 +368,19 @@ class Player(object):
 				success_prob = 0.25
 			elif np.array_equal(self.state, PlayerState.E):
 				success_prob = 0.9
+			else:
+				success_prob = 0
 
 		elif action == Player.ATTACKS.HIT:
 			if np.array_equal(self.state, PlayerState.C):
 				success_prob = 0.1
 			elif np.array_equal(self.state, PlayerState.E):
 				success_prob = 0.2
+			else:
+				success_prob = 0
 
-		# TODO
-		self.enemy.health
+		if self.enemy.health != new_state.enemy.health + action:
+			return 0
 
 		return success_prob
 		# deal appropriate damage with success_probability
@@ -353,7 +391,8 @@ class Player(object):
 			# check arrows
 			if self.arrows == 0:
 				return
-			self.arrows -= 1
+			if not simulate:
+				self.arrows -= 1
 			if np.array_equal(self.state, PlayerState.C):
 				success_prob = 0.5
 			elif np.array_equal(self.state, PlayerState.W):
@@ -383,6 +422,8 @@ class Player(object):
 		return 1, new_arrows
 
 	def check_craft(self, new_state):
+		if not np.array_equal(new_state.state, Player.STATES.N):
+			return 0
 		if self.materials != new_state.materials+1:
 			return 0
 		arrow_diff = abs(self.arrows - new_state.arrows)
@@ -391,9 +432,7 @@ class Player(object):
 		return [0.5, 0.35, 0.15][arrow_diff-1]
 
 	def gather(self, simulate=False):
-		if not np.array_equal(self.state, Player.STATES.S):
-			return
-		if self.materials == 2:
+		if not np.array_equal(self.state, Player.STATES.S) or self.materials == 2:
 			return
 		if simulate:
 			return 0.75
@@ -401,18 +440,28 @@ class Player(object):
 			self.materials += 1
 			return 1
 
-	def think(self, enemy):
-		# thoughts = self.try_action(enemy)
+	def check_gather(self, new_state):
+		if not np.array_equal(new_state.state, Player.STATES.S):
+			return 0
+		if new_state.materials == self.materials + 1:
+			return 0.75
+		elif new_state.materials == self.materials:
+			return 0.25
+
+		return 0
+
+	def think(self):
+		# thoughts = self.try_action(self.enemy)
 		# self.val_iter()
 		# print(
-		#     f"({pos},{self.materials},{self.arrows},{enemy.state},{enemy.health}):{self.action}=[{self.values[pos]}]")
-		# self.undo_simulated_action(enemy, *thoughts)
+		#     f"({pos},{self.materials},{self.arrows},{self.enemy.state},{self.enemy.health}):{self.action}=[{self.values[pos]}]")
+		# self.undo_simulated_action(self.enemy, *thoughts)
 		# TODO best action from value iteration
 		best_action = Player.MOVES.LEFT
 		return best_action
 
-	def make_move(self, enemy, simulate=False):
-		best_action = self.think(enemy)
+	def make_move(self, simulate=False):
+		best_action = self.think()
 		if self.stunned:
 			# can't make any move for one round
 			self.stunned = False
@@ -421,29 +470,37 @@ class Player(object):
 		# TODO get valid action
 		self._action = random.choice(self.choices)
 		self._action = best_action
-		self.perform_action(enemy)
+		self.perform_action()
 
 	def check_new_state(self, new_state):
 		action = self._action
-		damage, prev_state, craft_prob, mat_gains = None, None, None, None
+		damage_prob, prev_state_prob, craft_prob, mat_gains_prob = 0, 0, 0, 0
 		if action in Player.ATTACKS.values():
-			damage = self.attack(self.enemy, action, simulate=True)
+			damage_prob = self.check_attack(action, new_state)
+			# print("damage_prob", damage_prob)
+			return damage_prob
 		elif action in Player.MOVES.values():
-			prev_state = self.try_move(action, simulate=True)
+			prev_state_prob = self.try_next_move(action, new_state.state)
+			# print("prev_state_prob", prev_state_prob)
+			return prev_state_prob
 		elif action in Player.ACTIONS.values():
 			if action == Player.ACTIONS.CRAFT:
 				craft_prob = self.check_craft(new_state)
+				# print("craft_prob", craft_prob)
+				return craft_prob
 			elif action == Player.ACTIONS.GATHER:
-				mat_gains = self.gather(simulate=True)
+				mat_gains_prob = self.check_gather(new_state)
+				# print("mat_gains_prob", mat_gains_prob)
+				return mat_gains_prob
 			elif action == Player.ACTIONS.NONE:
+				# print("none", 0)
 				return 0
-		return [damage, prev_state, craft_prob, mat_gains]
 
 	def try_action(self):
 		action = self._action
 		damage, prev_state, craft_gains, mat_gains = None, None, None, None
 		if action in Player.ATTACKS.values():
-			damage = self.attack(self.enemy, action, simulate=True)
+			damage = self.attack(action, simulate=True)
 			if damage is None:
 				return
 		elif action in Player.MOVES.values():
@@ -485,7 +542,7 @@ class Player(object):
 	def perform_action(self, undo=False):
 		action = self._action
 		if action in Player.ATTACKS.values():
-			damage = self.attack(self.enemy, action)
+			damage = self.attack(action)
 			if undo and damage is not None:
 				self.enemy.heal(damage)
 
@@ -544,7 +601,11 @@ class Enemy(object):
 		if prob(0.2):
 			self.get_ready()
 
-	def try_attack(self, player: Player):
+	def try_attack(self, player: Player, simulate=False):
+		if simulate:
+			self.heal()
+			self.rest()
+			return player.get_wrecked(simulate)
 		if prob(0.5):
 			# attack
 			player.get_wrecked()
@@ -575,12 +636,31 @@ def loop():
 	print("Start!")
 	max_tries = 1000
 	iter_count = 0
+
+	utilities = np.zeros((5, 3, 4, 2, 5), dtype=np.float)
+
+	minus_infs = utilities.copy()
+	minus_infs[:] = -np.inf
+
+	future_utilities = minus_infs.copy()
+
+	stop_err = -np.inf
+
+	# print(ij.choices.__len__())
+
 	while True:
+		stop_err = -np.inf
+
+		new_utilities = minus_infs.copy()
+		new_utilities[:, :, :, :, 0] = 0
+
+		iter_count += 1
+		print("iteration=", iter_count, sep='')
 		for pos in range(5):
 			for materials in range(3):
 				for arrows in range(4):
-					for enemy_health in range(0, 125, 25):
-						for enemy_state in range(2):
+					for enemy_state in range(2):
+						for enemy_health in range(25, 125, 25):
 							for action in ij.choices:
 								ij._action = action
 								ij.arrows = arrows
@@ -589,7 +669,7 @@ def loop():
 								mm.health = enemy_health
 								mm.state = enemy_state
 
-								thoughts = ij.try_action(mm)
+								thoughts = ij.try_action()
 								if thoughts is None:
 									continue
 
@@ -600,11 +680,12 @@ def loop():
 								mm.health = enemy_health
 								mm.state = enemy_state
 
+								val = 0
 								for pos_next in range(5):
 									for materials_next in range(3):
 										for arrows_next in range(4):
-											for enemy_health_next in range(0, 125, 25):
-												for enemy_state_next in range(2):
+											for enemy_state_next in range(2):
+												for enemy_health_next in range(0, 125, 25):
 													idxx = ChoiceIndex.from_choice(
 														action)
 													reward = step_costs[idxx]
@@ -616,14 +697,108 @@ def loop():
 													mm_next.health = enemy_health_next
 													mm_next.state = enemy_state_next
 
-													new_thoughts = ij.check_new_state(
-														mm_next)
+													# rewards
+													if enemy_health_next == 0:
+														reward += 50
 
-								print(reward)
-		iter_count += 1
-		print("iteration=", iter_count, sep='')
-		mm.make_move(ij)
-		ij.make_move(mm)
+													# TODO attacked -40
+
+													next_idexr = pos_next, materials_next, arrows_next, enemy_state_next, (
+														enemy_health_next // 25)
+
+													# print(next_idexr)
+													valx = ij.check_new_state(ij_next) * (
+														reward + GAMMA * utilities[next_idexr])
+													# print(reward, valx, next_idexr)
+													val += valx
+
+								idexr = pos, materials, arrows, enemy_state, (
+									enemy_health // 25)
+								# print(new_utilities[idexr], val)
+								if val >= new_utilities[idexr]:
+									new_utilities[idexr] = val
+									# print(val)
+
+								curr_err = np.abs(
+									utilities[idexr] - new_utilities[idexr])
+								if stop_err < curr_err:
+									stop_err = curr_err
+
+		utilities = new_utilities.copy()
+		actions = minus_infs.copy()
+		actions[:] = -np.inf
+		actions[:, :, :, :, 0] = ChoiceIndex.NONE
+
+		for pos in range(5):
+			for materials in range(3):
+				for arrows in range(4):
+					for enemy_state in range(2):
+						for enemy_health in range(25, 125, 25):
+							for action in ij.choices:
+								ij._action = action
+								ij.arrows = arrows
+								ij.materials = materials
+								ij.state = _INV_STATE_MAP_NP_INDEX[pos]
+								mm.health = enemy_health
+								mm.state = enemy_state
+
+								thoughts = ij.try_action()
+								if thoughts is None:
+									continue
+
+								ij._action = action
+								ij.arrows = arrows
+								ij.materials = materials
+								ij.state = _INV_STATE_MAP_NP_INDEX[pos]
+								mm.health = enemy_health
+								mm.state = enemy_state
+
+								val = 0
+								for pos_next in range(5):
+									for materials_next in range(3):
+										for arrows_next in range(4):
+											for enemy_state_next in range(2):
+												for enemy_health_next in range(0, 125, 25):
+													idxx = ChoiceIndex.from_choice(
+														action)
+													reward = step_costs[idxx]
+
+													ij_next._action = action
+													ij_next.arrows = arrows_next
+													ij_next.materials = materials_next
+													ij_next.state = _INV_STATE_MAP_NP_INDEX[pos_next]
+													mm_next.health = enemy_health_next
+													mm_next.state = enemy_state_next
+
+													# rewards
+													if mm_next.dead:
+														reward += 50
+
+													val += ij.check_new_state(ij_next) * (
+														reward + GAMMA * utilities[pos, materials, arrows, enemy_state, enemy_health // 25])
+
+								idxer = pos, materials, arrows, enemy_state, enemy_health // 25
+								if val >= future_utilities[idxer]:
+									future_utilities[idxer] = val
+									actions[idxer] = ChoiceIndex.from_choice(
+										action)
+
+		for pos in range(5):
+			for materials in range(3):
+				for arrows in range(4):
+					for enemy_state in range(2):
+						for enemy_health in range(0, 125, 25):
+							ij.arrows = arrows
+							ij.materials = materials
+							ij.state = _INV_STATE_MAP_NP_INDEX[pos]
+							mm.health = enemy_health
+							mm.state = enemy_state
+							idxer = pos, materials, arrows, enemy_state, enemy_health // 25
+							print(
+								f"({ij.cur_state},{ij.materials},{ij.arrows},{mm.state},{mm.health}):{ChoiceIndex.str(actions[idxer])}=[{utilities[idxer]}]")
+
+		# mm.make_move(ij)
+		# ij.make_move()
 		# print(ij.cur_state)
 		# print(ij.materials)
 		# print(ij.arrows)
@@ -631,10 +806,7 @@ def loop():
 		# print(mm.health)
 		# print(ij.action)
 		# print(ij.values[ij.cur_state])
-		# print(
-		#     f"({ij.cur_state},{ij.materials},{ij.arrows},{mm.state},{mm.health}):{ij.action}=[{ij.values[ij.cur_state]}]")
-		if iter_count >= max_tries or mm.dead:
-			print("Game Over")
+		if (iter_count >= max_tries) or (stop_err <= DELTA):
 			return
 
 
@@ -653,7 +825,7 @@ def main():
 	# Task 2
 	# case 1
 	# case 2
-	step_costs[ChoiceIndex.STAY] = 0
+	# step_costs[ChoiceIndex.STAY] = 0
 	loop()
 	# case 3
 
