@@ -266,7 +266,7 @@ class ChoiceIndex(MoveIndex, ActionIndex):
 		try:
 			strx = ChoiceIndex._inv_map_strs[choice]
 		except KeyError:
-			print(choice)
+			# print(choice)
 			strx = "ERROR"
 		return strx
 
@@ -306,8 +306,8 @@ class Player(object):
 
 
 	def valid_move(self, direction, new_state_pos):
-		if type(direction) == int or type(new_state_pos) == int:
-			print(new_state_pos, direction)
+		# if type(direction) == int or type(new_state_pos) == int:
+		# 	print(new_state_pos, direction)
 		return tuple(new_state_pos - direction) == tuple(self.state) or (tuple(self.state) != Player.STATES.W and tuple(new_state_pos) == Player.STATES.E)
 
 	@property
@@ -331,10 +331,18 @@ class Player(object):
 		if can_move:
 			return prev_state
 
-	def try_next_move(self, direction: tuple, new_state_pos):
+	def try_next_move(self, direction: tuple, new_state):
+		new_state_pos = new_state.state
 		# can_move = self.valid_move(direction, new_state_pos)
 		# if not can_move:
 		# 	return 0
+		if new_state.arrows != self.arrows:
+			return 0
+		if self.enemy.health != new_state.enemy.health:
+			return 0
+		if new_state.materials != self.materials:
+			return 0
+
 		prev_state_idx = StateIndex.from_state(self.state)
 		new_state_idx = StateIndex.from_state(new_state_pos)
 		probx = move_p_mat[prev_state_idx][ChoiceIndex.from_choice(direction)][new_state_idx]
@@ -388,6 +396,9 @@ class Player(object):
 			return 0
 
 		probx = 0
+		if new_state.materials != self.materials:
+			return 0
+
 		if action == Player.ATTACKS.SHOOT:
 			if new_state.arrows != self.arrows - 1:
 				return 0
@@ -411,6 +422,8 @@ class Player(object):
 				probx = 0
 
 		elif action == Player.ATTACKS.HIT:
+			if new_state.arrows != self.arrows:
+				return 0
 			if np.array_equal(self.state, PlayerState.C):
 				if self.enemy.health == new_state.enemy.health:
 					probx = 0.9
@@ -467,7 +480,11 @@ class Player(object):
 	def check_craft(self, new_state):
 		if not np.array_equal(new_state.state, Player.STATES.N):
 			return 0
+		if not np.array_equal(new_state.state, self.state):
+			return 0
 		if self.materials != new_state.materials+1:
+			return 0
+		if self.enemy.health != new_state.enemy.health:
 			return 0
 		arrow_diff = abs(self.arrows - new_state.arrows)
 		if arrow_diff == 0:
@@ -484,7 +501,13 @@ class Player(object):
 			return 1
 
 	def check_gather(self, new_state):
+		if not np.array_equal(new_state.state, self.state):
+			return 0
 		if not np.array_equal(new_state.state, Player.STATES.S):
+			return 0
+		if self.enemy.health != new_state.enemy.health:
+			return 0
+		if new_state.arrows != self.arrows:
 			return 0
 		if new_state.materials == self.materials + 1:
 			return 0.75
@@ -537,7 +560,7 @@ class Player(object):
 			# print("damage_prob", damage_prob)
 			probx = damage_prob
 		elif action in Player.MOVES.values():
-			prev_state_prob = self.try_next_move(action, new_state.state)
+			prev_state_prob = self.try_next_move(action, new_state)
 			# print("prev_state_prob", prev_state_prob)
 			probx = prev_state_prob
 		elif action in Player.ACTIONS.values():
@@ -551,7 +574,15 @@ class Player(object):
 				probx = mat_gains_prob
 			elif action == Player.ACTIONS.NONE:
 				# print("none", 0)
-				probx = 0
+				if not np.array_equal(new_state.state, self.state):
+					return 0
+				if self.enemy.health != new_state.enemy.health:
+					return 0
+				if new_state.arrows != self.arrows:
+					return 0
+				if new_state.materials != self.materials:
+					return 0
+				probx = 1
 
 		if self.enemy.state == Enemy.STATES.R:
 			if new_state.enemy.state == Enemy.STATES.R:
@@ -716,7 +747,7 @@ def loop():
 
 	# print(ij, "vs", mm)
 	# print("Start!")
-	max_tries = 1000
+	max_tries = 200
 	iter_count = 0
 
 	utilities = np.zeros((5, 3, 4, 2, 5), dtype=np.float)
@@ -783,11 +814,12 @@ def loop():
 													mm_next.state = enemy_state_next
 
 													# rewards
-													# attacked -40
-													if ij.enemy.state == Enemy.STATES.R and mm_next.state == Enemy.STATES.D:
+													if enemy_state == Enemy.STATES.R and mm_next.state == Enemy.STATES.D:
+														# print('R->D enemy', idexr, next_idexr)
 														reward -= 40
 													else:
 														if enemy_health_next == 0:
+															# print('enemy dead', idexr, next_idexr)
 															reward += 50
 
 													next_idexr = pos_next, materials_next, arrows_next, enemy_state_next, (
@@ -804,7 +836,8 @@ def loop():
 								# print(new_utilities[idexr], val)
 								if val >= new_utilities[idexr]:
 									new_utilities[idexr] = val
-									# print("-"*10, val)
+									# if idexr == (0,0,0,1,1) or idexr == (0,0,0,0,1):
+										# print("-"*10, val)
 
 							curr_err = np.abs(
 								utilities[idexr] - new_utilities[idexr])
@@ -859,16 +892,19 @@ def loop():
 													mm_next.health = enemy_health_next
 													mm_next.state = enemy_state_next
 
-													# rewards
-													if enemy_health_next == 0:
-														reward += 50
-
-													if ij.enemy.state == Enemy.STATES.R:
-														if mm_next.state == Enemy.STATES.D:
-															reward -= 40
 
 													next_idexr = pos_next, materials_next, arrows_next, enemy_state_next, (
 														enemy_health_next // 25)
+
+													# rewards
+													if enemy_state == Enemy.STATES.R and mm_next.state == Enemy.STATES.D:
+														# print('R->D enemy', idexr, next_idexr)
+														reward -= 40
+													else:
+														if enemy_health_next == 0:
+															# print('enemy dead', idexr, next_idexr)
+															reward += 50
+
 
 													probx = ij.check_new_state(ij_next)
 													# if probx == 0:
@@ -877,6 +913,8 @@ def loop():
 														reward + GAMMA * utilities[next_idexr])
 
 								idxer = pos, materials, arrows, enemy_state, enemy_health // 25
+								# if idexr == (0,0,0,1,1) or idexr == (0,0,0,0,1):
+									# print("+"*10, val)
 								if val >= future_utilities[idxer]:
 									future_utilities[idxer] = val
 									actions[idxer] = ChoiceIndex.from_choice(
@@ -901,7 +939,7 @@ def loop():
 							if thoughts is None:
 								continue
 							print(
-								f"({_INV_STATE_MAP_INDEX_STRS[pos]},{materials},{arrows},{Enemy._inv_map[enemy_state]},{enemy_health}):{ChoiceIndex.str(actions[idxer])}=[{round(utilities[idxer], 3)}]")
+								f"({_INV_STATE_MAP_INDEX_STRS[pos]},{materials},{arrows},{Enemy._inv_map[enemy_state]},{enemy_health}):{ChoiceIndex.str(actions[idxer])}=[{np.around(utilities[idxer], 3)}]")
 								# f"({_INV_STATE_MAP_INDEX_STRS[pos]},{materials},{arrows},{enemy_state},{enemy_health}):{ChoiceIndex.str(actions[idxer])}=[{utilities[idxer]}, {new_utilities[idxer]}, {future_utilities[idxer]}]")
 
 		print("---"*9, max_delta, max_idexr, f"{ChoiceIndex.str(actions[max_idexr])}=[{utilities[max_idexr]}]")
