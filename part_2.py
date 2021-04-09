@@ -295,12 +295,14 @@ class Player(object):
 	def move(self, direction, simulate=False):
 		# add direction to state
 		self.state += direction
+		valid = np.sum(np.abs(self.state)) <= 1
+		if simulate:
+			self.state -= direction
+			return valid
 		if np.sum(np.abs(self.state)) > 1:
 			# out of bounds, illegal move -> undo move
 			self.state -= direction
 
-		if simulate:
-			return np.sum(np.abs(self.state)) <= 1
 
 	def valid_move(self, direction, new_state_pos):
 		if type(direction) == int or type(new_state_pos) == int:
@@ -689,12 +691,17 @@ def loop():
 	mm.encounter_player(ij)
 	mm_next.encounter_player(ij_next)
 
+	# ij.state = np.array(Player.STATES.W)
+	# print(ij.move(Player.MOVES.DOWN, simulate=True))
+	# return
+
 	# print(ij, "vs", mm)
 	# print("Start!")
 	max_tries = 1000
 	iter_count = 0
 
 	utilities = np.zeros((5, 3, 4, 2, 5), dtype=np.float)
+	actions = np.zeros((5, 3, 4, 2, 5), dtype=np.int)
 
 	minus_infs = utilities.copy()
 	minus_infs[:] = -np.inf
@@ -785,7 +792,6 @@ def loop():
 									stop_err = curr_err
 
 		utilities = new_utilities.copy()
-		actions = np.zeros((5, 3, 4, 2, 5), dtype=np.int)
 		actions[:] = -1e30
 		actions[:, :, :, :, 0] = ChoiceIndex.NONE
 		future_utilities = minus_infs.copy()
@@ -874,13 +880,15 @@ def loop():
 							if thoughts is None:
 								continue
 							print(
-								f"({_INV_STATE_MAP_INDEX_STRS[pos]},{materials},{arrows},{enemy_state},{enemy_health}):{ChoiceIndex.str(actions[idxer])}=[{utilities[idxer]}, {new_utilities[idxer]}, {future_utilities[idxer]}]")
+								f"({_INV_STATE_MAP_INDEX_STRS[pos]},{materials},{arrows},{enemy_state},{enemy_health}):{ChoiceIndex.str(actions[idxer])}=[{utilities[idxer]}]")
+								# f"({_INV_STATE_MAP_INDEX_STRS[pos]},{materials},{arrows},{enemy_state},{enemy_health}):{ChoiceIndex.str(actions[idxer])}=[{utilities[idxer]}, {new_utilities[idxer]}, {future_utilities[idxer]}]")
 
 		if (iter_count >= max_tries) or (stop_err <= DELTA):
 			return
 
 
 def main():
+	global GAMMA
 	print("Params", "DELTA", DELTA, "GAMMA", GAMMA, "STEP_COST", STEP_COST)
 	# Task 1
 
@@ -890,7 +898,6 @@ def main():
 
 	global move_p_mat
 	global step_costs
-	global GAMMA
 
 	move_p_mat_backup = move_p_mat.copy()
 	step_costs_backup = step_costs.copy()
