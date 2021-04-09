@@ -2,8 +2,8 @@ import os
 from collections import OrderedDict
 from typing import Iterable
 import random
-from value_iter import C, R, Ri
 import numpy as np
+import sys
 
 # inital setup
 os.makedirs("outputs", exist_ok=True)
@@ -201,6 +201,14 @@ class MoveIndex:
 		tuple(PlayerMove.RIGHT): RIGHT,
 	})
 
+	_map = DotDict({
+		LEFT: tuple(PlayerMove.LEFT),
+		UP: tuple(PlayerMove.UP),
+		STAY: tuple(PlayerMove.STAY),
+		DOWN: tuple(PlayerMove.DOWN),
+		RIGHT: tuple(PlayerMove.RIGHT),
+	})
+
 
 class ActionIndex:
 	SHOOT, HIT, CRAFT, GATHER, NONE = 5, 6, 7, 8, 9
@@ -211,6 +219,15 @@ class ActionIndex:
 		pl_actions.CRAFT: CRAFT,
 		pl_actions.GATHER: GATHER,
 		pl_actions.NONE: NONE,
+	})
+
+
+	_map = DotDict({
+		SHOOT:		pl_attacks.SHOOT,
+		HIT:		pl_attacks.HIT,
+		CRAFT:		pl_actions.CRAFT,
+		GATHER:		pl_actions.GATHER,
+		NONE:		pl_actions.NONE,
 	})
 
 
@@ -234,6 +251,13 @@ class ChoiceIndex(MoveIndex, ActionIndex):
 		if type(choice) == int:
 			return ActionIndex._inv_map[choice]
 		return MoveIndex._inv_map[tuple(choice)]
+	
+	@staticmethod
+	def to_choice(choice):
+		if choice >= 5:
+			return ActionIndex._map[choice]
+		return MoveIndex._map[choice]
+
 
 	@staticmethod
 	def str(choice):
@@ -241,6 +265,7 @@ class ChoiceIndex(MoveIndex, ActionIndex):
 		try:
 			strx = ChoiceIndex._inv_map_strs[choice]
 		except KeyError:
+			print(choice)
 			strx = "ERROR"
 		return strx
 
@@ -516,8 +541,10 @@ class Player(object):
 			if new_state.enemy.state == Enemy.STATES.R:
 				probx = probx * 0.5
 			else:
-				# nothing is successful so prob = 0
+				# nothing is successful so prob = 0.5
 				probx = 0.5
+				if new_state.arrows != 0:
+					return 0
 		elif self.enemy.state == Enemy.STATES.D:
 			if new_state.enemy.state == Enemy.STATES.R:
 				probx = probx * 0.2
@@ -734,7 +761,6 @@ def loop():
 														if mm_next.state == Enemy.STATES.D:
 															reward -= 40
 
-
 													next_idexr = pos_next, materials_next, arrows_next, enemy_state_next, (
 														enemy_health_next // 25)
 
@@ -759,7 +785,8 @@ def loop():
 									stop_err = curr_err
 
 		utilities = new_utilities.copy()
-		actions = minus_infs.copy()
+		actions = np.zeros((5, 3, 4, 2, 5), dtype=np.int)
+		actions[:] = -1e30
 		actions[:, :, :, :, 0] = ChoiceIndex.NONE
 		future_utilities = minus_infs.copy()
 		future_utilities[:, :, :, :, 0] = 0
@@ -834,7 +861,7 @@ def loop():
 					for enemy_state in range(2):
 						for enemy_health in range(0, 125, 25):
 							idxer = pos, materials, arrows, enemy_state, enemy_health // 25
-							action = actions[idxer]
+							action = ChoiceIndex.to_choice(actions[idxer])
 							ij._action = action
 
 							ij.arrows = arrows
@@ -847,40 +874,52 @@ def loop():
 							if thoughts is None:
 								continue
 							print(
-								f"({_INV_STATE_MAP_INDEX_STRS[pos]},{materials},{arrows},{enemy_state},{enemy_health}):{ChoiceIndex.str(action)}=[{utilities[idxer]}, {new_utilities[idxer]}, {future_utilities[idxer]}]")
+								f"({_INV_STATE_MAP_INDEX_STRS[pos]},{materials},{arrows},{enemy_state},{enemy_health}):{ChoiceIndex.str(actions[idxer])}=[{utilities[idxer]}, {new_utilities[idxer]}, {future_utilities[idxer]}]")
 
-		# mm.make_move(ij)
-		# ij.make_move()
-		# print(ij.cur_state)
-		# print(ij.materials)
-		# print(ij.arrows)
-		# print(mm.state)
-		# print(mm.health)
-		# print(ij.action)
-		# print(ij.values[ij.cur_state])
-		print(stop_err)
 		if (iter_count >= max_tries) or (stop_err <= DELTA):
 			return
 
 
 def main():
-	# print("Params", "DELTA", DELTA, "GAMMA", GAMMA, "STEP_COST", STEP_COST)
-	# print(state_mat.shape)
-	# print(state_mat[StateIndex.W].shape)
-	# print(state_mat[0][0].shape)
-	# print(state_mat[0][0][0].shape)
-	# print(state_mat[0][0][0][0].shape)
-	# print(state_mat[0][0][0][0][0].shape)
-	# print(state_mat[0][0][0][0][0][ChoiceIndex.LEFT])
-	# state_mat[StateIndex.W, ..., ChoiceIndex.STAY] = 1
+	print("Params", "DELTA", DELTA, "GAMMA", GAMMA, "STEP_COST", STEP_COST)
 	# Task 1
 
+	original = sys.stdout
+
 	# Task 2
+
+	global move_p_mat
+	global step_costs
+	global GAMMA
+
+	move_p_mat_backup = move_p_mat.copy()
+	step_costs_backup = step_costs.copy()
+	gamma_backup = GAMMA
 	# case 1
+
+	sys.stdout = open('./outputs/part_2_task_2.1_trace.txt', 'w')
+	move_p_mat[StateIndex.E][0] = np.array([1.0, .00, .0, .00, .00])
+	loop()
+	sys.stdout.close()
+	sys.stdout = original
+	move_p_mat = move_p_mat_backup.copy()
+
 	# case 2
 	# step_costs[ChoiceIndex.STAY] = 0
+	sys.stdout = open('./outputs/part_2_task_2.2_trace.txt', 'w')
+	step_costs[ChoiceIndex.STAY] = 0
 	loop()
+	sys.stdout.close()
+	sys.stdout = original
+	step_costs = step_costs_backup.copy()
+
 	# case 3
+	sys.stdout = open('./outputs/part_2_task_2.3_trace.txt', 'w')
+	GAMMA = 0.25
+	loop()
+	sys.stdout.close()
+	sys.stdout = original
+	GAMMA = gamma_backup
 
 
 if __name__ == '__main__':
