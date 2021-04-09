@@ -18,7 +18,8 @@ DELTA = 1e-3
 # state mat arrow enemy health actions
 # num_states = (5, 3, 4, 2, 5)
 # num_states = 5*3*4*2*5  # 600
-# p_mat = np.zeros((num_states, 10, num_states), dtype=np.float)
+p_mat = np.zeros((5, 3, 4, 2, 5, 10, 5, 3, 4, 2, 5), dtype=np.float)
+p_mat[:] = -np.inf
 
 # mat -> arr
 # arr -> mat
@@ -516,6 +517,19 @@ class Player(object):
 
 	def check_new_state(self, new_state):
 		action = self._action
+
+		pos = _INV_STATE_MAP_INDEX[self.cur_state]
+		idexr = pos, self.materials, self.arrows, self.enemy.state, (
+			self.enemy.health // 25)
+		pos_next = _INV_STATE_MAP_INDEX[new_state.cur_state]
+		idexr_next = pos_next, new_state.materials, new_state.arrows, new_state.enemy.state, (
+			new_state.enemy.health // 25)
+
+		# check if cached
+		probxx = p_mat[idexr][ChoiceIndex.from_choice(action)][idexr_next]
+		if probxx != -np.inf:
+			return probxx
+
 		damage_prob, prev_state_prob, craft_prob, mat_gains_prob = 0, 0, 0, 0
 		probx = 0
 		if action in Player.ATTACKS.values():
@@ -553,6 +567,8 @@ class Player(object):
 			else:
 				probx = probx * 0.8
 
+		# cache
+		p_mat[idexr][ChoiceIndex.from_choice(action)][idexr_next] = probx
 		return probx
 
 	def try_action(self):
@@ -576,6 +592,8 @@ class Player(object):
 				if mat_gains is None:
 					return
 			elif action == Player.ACTIONS.NONE:
+				if self.enemy.dead:
+					return True
 				return
 		return [damage, prev_state, craft_gains, mat_gains]
 
@@ -629,6 +647,7 @@ class Player(object):
 
 class Enemy(object):
 	STATES = DotDict({"D": 0, "R": 1})
+	_inv_map = DotDict({0:"D", 1:"R"})
 
 	def __init__(self, name: str):
 		self.player = None
@@ -706,15 +725,17 @@ def loop():
 	minus_infs = utilities.copy()
 	minus_infs[:] = -np.inf
 
-	stop_err = -np.inf
+	max_delta = -np.inf
 
 	# print(ij.choices.__len__())
 
 	while True:
-		stop_err = -np.inf
+		max_delta = -np.inf
 
 		new_utilities = minus_infs.copy()
 		new_utilities[:, :, :, :, 0] = 0
+		# new_utilities[:, :, :, :, 0] = 50
+		max_idexr = None
 
 		iter_count += 1
 		print("iteration=", iter_count, sep='')
@@ -723,6 +744,8 @@ def loop():
 				for arrows in range(4):
 					for enemy_state in range(2):
 						for enemy_health in range(25, 125, 25):
+							idexr = pos, materials, arrows, enemy_state, (
+								enemy_health // 25)
 							for action in ij.choices:
 								ij._action = action
 								ij.arrows = arrows
@@ -760,13 +783,12 @@ def loop():
 													mm_next.state = enemy_state_next
 
 													# rewards
-													if enemy_health_next == 0:
-														reward += 50
-
 													# attacked -40
-													if ij.enemy.state == Enemy.STATES.R:
-														if mm_next.state == Enemy.STATES.D:
-															reward -= 40
+													if ij.enemy.state == Enemy.STATES.R and mm_next.state == Enemy.STATES.D:
+														reward -= 40
+													else:
+														if enemy_health_next == 0:
+															reward += 50
 
 													next_idexr = pos_next, materials_next, arrows_next, enemy_state_next, (
 														enemy_health_next // 25)
@@ -779,23 +801,22 @@ def loop():
 													val += valx
 													# print(probx, reward, valx, next_idexr, val)
 
-								idexr = pos, materials, arrows, enemy_state, (
-									enemy_health // 25)
 								# print(new_utilities[idexr], val)
 								if val >= new_utilities[idexr]:
 									new_utilities[idexr] = val
 									# print("-"*10, val)
 
-								curr_err = np.abs(
-									utilities[idexr] - new_utilities[idexr])
-								if stop_err < curr_err:
-									stop_err = curr_err
+							curr_err = np.abs(
+								utilities[idexr] - new_utilities[idexr])
+							if max_delta < curr_err:
+								max_idexr = idexr
+								max_delta = curr_err
 
 		utilities = new_utilities.copy()
-		actions[:] = -1e30
+		actions[:] = -1e10
 		actions[:, :, :, :, 0] = ChoiceIndex.NONE
 		future_utilities = minus_infs.copy()
-		future_utilities[:, :, :, :, 0] = 0
+		future_utilities[:, :, :, :, 0] = -1
 
 		for pos in range(5):
 			for materials in range(3):
@@ -880,10 +901,11 @@ def loop():
 							if thoughts is None:
 								continue
 							print(
-								f"({_INV_STATE_MAP_INDEX_STRS[pos]},{materials},{arrows},{enemy_state},{enemy_health}):{ChoiceIndex.str(actions[idxer])}=[{utilities[idxer]}]")
+								f"({_INV_STATE_MAP_INDEX_STRS[pos]},{materials},{arrows},{Enemy._inv_map[enemy_state]},{enemy_health}):{ChoiceIndex.str(actions[idxer])}=[{round(utilities[idxer], 3)}]")
 								# f"({_INV_STATE_MAP_INDEX_STRS[pos]},{materials},{arrows},{enemy_state},{enemy_health}):{ChoiceIndex.str(actions[idxer])}=[{utilities[idxer]}, {new_utilities[idxer]}, {future_utilities[idxer]}]")
 
-		if (iter_count >= max_tries) or (stop_err <= DELTA):
+		print("---"*9, max_delta, max_idexr, f"{ChoiceIndex.str(actions[max_idexr])}=[{utilities[max_idexr]}]")
+		if (iter_count >= max_tries) or (max_delta <= DELTA):
 			return
 
 
@@ -904,10 +926,10 @@ def main():
 	gamma_backup = GAMMA
 	# case 1
 
-	sys.stdout = open('./outputs/part_2_task_2.1_trace.txt', 'w')
+	# sys.stdout = open('./outputs/part_2_task_2.1_trace.txt', 'w')
 	move_p_mat[StateIndex.E][0] = np.array([1.0, .00, .0, .00, .00])
 	loop()
-	sys.stdout.close()
+	# sys.stdout.close()
 	sys.stdout = original
 	move_p_mat = move_p_mat_backup.copy()
 
